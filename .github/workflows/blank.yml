@@ -1,0 +1,75 @@
+name: update
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'image tag'
+        required: true
+        default: 'tag revision in M.m.b'
+      Tag:
+        description: 'service to update'
+        type: choice
+        options: 
+          - ui
+          - api
+        required: true
+
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  devops-sandbox-test-update:
+    name: devops-sandbox-test update
+    runs-on: ubuntu-latest
+    env: 
+      environment: devops-sandbox-test
+    steps:
+
+    - name: Checkout Repository
+      uses: actions/checkout@master
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-region: us-west-2
+        role-to-assume: arn:aws:iam::032474939542:role/ServiceAccess-sre-portal-deploy
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: 0.14.6
+
+    - name: Terraform Init
+      id: init
+      run: terraform init -backend-config="backends/devops-sandbox-test.s3.tfbackend"
+      continue-on-error: true
+
+    - name: Terraform fmt
+      id: fmt
+      run: terraform fmt
+
+    - name: Terraform Validate
+      id: validation
+      run: terraform validate
+      continue-on-error: false
+
+    - name: Terraform List
+      id: list
+      run: terraform state list
+
+    - name: Terraform Update
+      id: update
+      run: |
+        if [ "${{ inputs.Tag }}" == "latest" ]; then
+          terraform apply -target aws_ecs_task_definition.main -var-file=variables/$environment.tfvars -var "tag=${{environment}}" -auto-approve
+        elif [ "${{ inputs.Tag }}" == "api" ]; then
+          terraform apply -target aws_ecs_task_definition.main2 -var-file=variables/$environment.tfvars -var "tag=INACTIVE" -auto-approve
+        fi
+
+    - name: Terraform Plan
+      id: plan
+      run: terraform plan -var-file=variables/$environment.tfvars -no-color
+      continue-on-error: true
